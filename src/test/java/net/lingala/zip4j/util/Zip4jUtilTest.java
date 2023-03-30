@@ -110,10 +110,10 @@ public class Zip4jUtilTest {
   }
 
   @Test
-  public void testConvertCharArrayToByteArray() {
+  public void testConvertCharArrayToByteArrayWithoutUtf8() {
     char[] charArray = "CharArray".toCharArray();
 
-    byte[] byteArray = Zip4jUtil.convertCharArrayToByteArray(charArray);
+    byte[] byteArray = Zip4jUtil.convertCharArrayToByteArray(charArray, false);
 
     assertThat(byteArray.length).isEqualTo(charArray.length);
     assertThat(byteArray[0]).isEqualTo((byte)'C');
@@ -131,7 +131,7 @@ public class Zip4jUtilTest {
   public void testConvertCharArrayToByteArrayChineseChars() {
     char[] charArray = "你好".toCharArray();
 
-    byte[] byteArray = Zip4jUtil.convertCharArrayToByteArray(charArray);
+    byte[] byteArray = Zip4jUtil.convertCharArrayToByteArray(charArray, true);
 
     try {
       // Make sure that StandardCharsets exists on the classpath
@@ -147,7 +147,7 @@ public class Zip4jUtilTest {
   }
 
   @Test
-  public void testGetCompressionMethodForNonAesReturnsAsIs() {
+  public void testGetCompressionMethodForNonAesReturnsAsIs() throws ZipException {
     LocalFileHeader localFileHeader = new LocalFileHeader();
     localFileHeader.setCompressionMethod(CompressionMethod.DEFLATE);
 
@@ -155,9 +155,9 @@ public class Zip4jUtilTest {
   }
 
   @Test
-  public void testGetCompressionMethodForAesWhenAesExtraDataMissingThrowsException() {
+  public void testGetCompressionMethodForAesWhenAesExtraDataMissingThrowsException() throws ZipException {
     expectedException.expectMessage("AesExtraDataRecord not present in local header for aes encrypted data");
-    expectedException.expect(RuntimeException.class);
+    expectedException.expect(ZipException.class);
 
     LocalFileHeader localFileHeader = new LocalFileHeader();
     localFileHeader.setCompressionMethod(CompressionMethod.AES_INTERNAL_ONLY);
@@ -166,7 +166,7 @@ public class Zip4jUtilTest {
   }
 
   @Test
-  public void testGetCompressionMethidForAesReturnsFromAesExtraDataRecord() {
+  public void testGetCompressionMethidForAesReturnsFromAesExtraDataRecord() throws ZipException {
     AESExtraDataRecord aesExtraDataRecord = new AESExtraDataRecord();
     aesExtraDataRecord.setCompressionMethod(CompressionMethod.STORE);
 
@@ -211,7 +211,7 @@ public class Zip4jUtilTest {
     ControlledReadInputStream controlledReadInputStream = new ControlledReadInputStream(randomInputStream, 100);
 
     expectedException.expect(IOException.class);
-    expectedException.expectMessage("Cannot read fully into byte buffer");
+    expectedException.expectMessage("Unexpected EOF reached when trying to read stream");
 
     assertThat(Zip4jUtil.readFully(controlledReadInputStream, b)).isEqualTo(-1);
   }

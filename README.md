@@ -1,7 +1,7 @@
 [![javadoc](https://javadoc.io/badge2/net.lingala.zip4j/zip4j/javadoc.svg)](https://javadoc.io/doc/net.lingala.zip4j/zip4j)
 [![Maven Central](https://maven-badges.herokuapp.com/maven-central/net.lingala.zip4j/zip4j/badge.svg)](https://maven-badges.herokuapp.com/maven-central/net.lingala.zip4j/zip4j)
 
-[![Build Status](https://travis-ci.com/srikanth-lingala/zip4j.svg?branch=master)](https://travis-ci.com/srikanth-lingala/zip4j)
+[![Build Status](https://github.com/srikanth-lingala/zip4j/actions/workflows/maven.yml/badge.svg)](https://github.com/srikanth-lingala/zip4j/actions/workflows/maven.yml)
 [![Android Build Status](https://circleci.com/gh/srikanth-lingala/zip4j-android-test.svg?style=svg)](https://circleci.com/gh/srikanth-lingala/zip4j-android-test)
 [![Known Vulnerabilities](https://snyk.io//test/github/srikanth-lingala/zip4j/badge.svg?targetFile=pom.xml)](https://snyk.io//test/github/srikanth-lingala/zip4j?targetFile=pom.xml)
 
@@ -71,7 +71,7 @@ Zip4j supports JDK 7 as well. In cases where the feature/class from JDK 8 is mis
 <dependency>
     <groupId>net.lingala.zip4j</groupId>
     <artifactId>zip4j</artifactId>
-    <version>2.9.1</version>
+    <version>2.11.5</version>
 </dependency>
 ```
 
@@ -336,7 +336,7 @@ Map<String, String> fileNamesMap = new HashMap<>();
 fileNamesMap.put("firstFile.txt", "newFileFirst.txt");
 fileNamesMap.put("secondFile.pdf", "newSecondFile.pdf");
 fileNamesMap.put("some-folder/thirdFile.bin", "some-folder/newThirdFile.bin");
-new ZipFile("filename.zip").renameFile("entry-to-be-changed.pdf", "new-file-name.pdf");
+new ZipFile("filename.zip").renameFiles(fileNamesMap);
 ```
 
 To modify an entry name which is inside a folder, the new file name should contain the complete parent path as well.

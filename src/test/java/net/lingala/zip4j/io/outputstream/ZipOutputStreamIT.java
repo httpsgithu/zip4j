@@ -3,7 +3,9 @@ package net.lingala.zip4j.io.outputstream;
 import net.lingala.zip4j.AbstractIT;
 import net.lingala.zip4j.ZipFile;
 import net.lingala.zip4j.exception.ZipException;
+import net.lingala.zip4j.io.inputstream.ZipInputStream;
 import net.lingala.zip4j.model.FileHeader;
+import net.lingala.zip4j.model.LocalFileHeader;
 import net.lingala.zip4j.model.Zip4jConfig;
 import net.lingala.zip4j.model.ZipParameters;
 import net.lingala.zip4j.model.enums.AesKeyStrength;
@@ -18,6 +20,7 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.ExpectedException;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
@@ -27,6 +30,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -36,7 +41,9 @@ import static net.lingala.zip4j.util.FileUtils.isMac;
 import static net.lingala.zip4j.util.FileUtils.isUnix;
 import static net.lingala.zip4j.util.FileUtils.isWindows;
 import static net.lingala.zip4j.util.InternalZipConstants.MIN_BUFF_SIZE;
+import static net.lingala.zip4j.util.InternalZipConstants.USE_UTF8_FOR_PASSWORD_ENCODING_DECODING;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.fail;
 
 public class ZipOutputStreamIT extends AbstractIT {
 
@@ -46,7 +53,7 @@ public class ZipOutputStreamIT extends AbstractIT {
   @Test
   public void testConstructorThrowsExceptionWhenBufferSizeIsLessThanExpected() throws IOException {
     OutputStream outputStream = new ByteArrayOutputStream();
-    Zip4jConfig zip4jConfig = new Zip4jConfig(null, InternalZipConstants.MIN_BUFF_SIZE - 1);
+    Zip4jConfig zip4jConfig = new Zip4jConfig(null, InternalZipConstants.MIN_BUFF_SIZE - 1, USE_UTF8_FOR_PASSWORD_ENCODING_DECODING);
 
     expectedException.expect(IllegalArgumentException.class);
     expectedException.expectMessage("Buffer size cannot be less than " + MIN_BUFF_SIZE + " bytes");
@@ -253,6 +260,80 @@ public class ZipOutputStreamIT extends AbstractIT {
     verifyZipFileByExtractingAllFiles(generatedZipFile, outputFolder, 2);
   }
 
+
+  @Test
+  public void testPutNextEntryWithEmptyFileNameInZipParameters() throws IOException {
+    ZipParameters zParams = new ZipParameters();
+    zParams.setFileNameInZip("");
+
+    try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(generatedZipFile))) {
+      try {
+        zos.putNextEntry(zParams);
+        fail("Suppose to throw an exception");
+      } catch (Exception ex) {
+        assertThat(ex).isInstanceOf(IllegalArgumentException.class);
+        assertThat(ex).hasMessageContaining("fileNameInZip is null or empty");
+      }
+    }
+  }
+
+  @Test
+  public void testPutNextEntryWithNullFileNameInZipParameters() throws IOException {
+    ZipParameters zParams = new ZipParameters();
+    zParams.setFileNameInZip(null);
+
+    try (ZipOutputStream zos = new ZipOutputStream(new FileOutputStream(generatedZipFile))) {
+      try {
+        zos.putNextEntry(zParams);
+        fail("Suppose to throw an exception");
+      } catch (Exception ex) {
+        assertThat(ex).isInstanceOf(IllegalArgumentException.class);
+        assertThat(ex).hasMessageContaining("fileNameInZip is null or empty");
+      }
+    }
+  }
+
+  @Test
+  public void testLastModifiedTimeIsSetWhenItIsNotExplicitlySet() throws IOException {
+    long currentTime = System.currentTimeMillis();
+    ByteArrayOutputStream zip = new ByteArrayOutputStream();
+
+    try (ZipOutputStream zos = new ZipOutputStream(zip)) {
+      ZipParameters params = new ZipParameters();
+      params.setFileNameInZip("test");
+      zos.putNextEntry(params);
+      zos.closeEntry();
+    }
+
+    try (ZipInputStream zis = new ZipInputStream(new ByteArrayInputStream(zip.toByteArray()))) {
+      LocalFileHeader fileHeader = zis.getNextEntry();
+      long zipTime = fileHeader.getLastModifiedTimeEpoch();
+      assertThat(currentTime).isLessThan(zipTime + 2000);
+    }
+  }
+
+  @Test
+  public void testZipInputStreamWithDeflateAndAesEncryption() throws IOException {
+    byte[] buffer = new byte[InternalZipConstants.BUFF_SIZE];
+    int readLen;
+    File fileToAdd = getTestFileFromResources("file_PDF_1MB.pdf");
+    try (ZipOutputStream zipOutputStream = new ZipOutputStream(Files.newOutputStream(generatedZipFile.toPath()), PASSWORD)) {
+      ZipParameters zipParameters = new ZipParameters();
+      zipParameters.setFileNameInZip(fileToAdd.getName());
+      zipParameters.setEncryptFiles(true);
+      zipParameters.setEncryptionMethod(EncryptionMethod.AES);
+      zipOutputStream.putNextEntry(zipParameters);
+      try (InputStream inputStream = Files.newInputStream(fileToAdd.toPath())) {
+        while ((readLen = inputStream.read(buffer)) != -1) {
+          zipOutputStream.write(buffer, 0, readLen);
+        }
+      }
+    }
+
+    verifyZipFileByExtractingAllFiles(generatedZipFile, PASSWORD, outputFolder, 1, true);
+    extractZipFileWithInputStream(generatedZipFile);
+  }
+
   private void testZipOutputStream(CompressionMethod compressionMethod, boolean encrypt,
                                    EncryptionMethod encryptionMethod, AesKeyStrength aesKeyStrength,
                                    AesVersion aesVersion)
@@ -455,5 +536,20 @@ public class ZipOutputStreamIT extends AbstractIT {
     zipParameters.setFileNameInZip(fileName);
     zipOutputStream.putNextEntry(zipParameters);
     zipOutputStream.closeEntry();
+  }
+
+  private void extractZipFileWithInputStream(File zipFile) throws IOException {
+    byte[] buffer = new byte[InternalZipConstants.BUFF_SIZE];
+    int readLen;
+    LocalFileHeader lfh;
+    try (ZipInputStream zipInputStream = new ZipInputStream(Files.newInputStream(zipFile.toPath()), PASSWORD)) {
+      while ((lfh = zipInputStream.getNextEntry()) != null) {
+        while ((readLen = zipInputStream.read(buffer)) != -1) {
+          try (OutputStream outputStream = Files.newOutputStream(Paths.get(outputFolder.getPath(), lfh.getFileName()))) {
+            outputStream.write(buffer, 0, readLen);
+          }
+        }
+      }
+    }
   }
 }

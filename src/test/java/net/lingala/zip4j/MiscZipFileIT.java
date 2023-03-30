@@ -21,6 +21,8 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.Charset;
 import java.nio.file.Paths;
+import java.text.ParseException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -30,6 +32,7 @@ import java.util.concurrent.ThreadFactory;
 import static java.util.Collections.singletonList;
 import static net.lingala.zip4j.testutils.TestUtils.getFileNamesOfFiles;
 import static net.lingala.zip4j.testutils.TestUtils.getTestFileFromResources;
+import static net.lingala.zip4j.util.Zip4jUtil.epochToExtendedDosTime;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.fail;
 
@@ -416,7 +419,7 @@ public class MiscZipFileIT extends AbstractIT {
     File newFile = temporaryFolder.newFile("NEW_FILE_NAME.ZIP");
     String oldFile = generatedZipFile.getPath();
 
-    if(TestUtils.isWindows())
+    if(FileUtils.isWindows())
     {
       newFile.delete();
     }
@@ -632,6 +635,91 @@ public class MiscZipFileIT extends AbstractIT {
     assertInputStreamsAreClosed(Collections.singletonList(inputStream));
   }
 
+  @Test
+  public void testAddAndExtractFilesToZipWithUtf8PasswordEncoding() throws IOException {
+    testAddAndExtractWithPasswordUtf8Encoding(true);
+  }
+
+  @Test
+  public void testAddAndExtractFilesToZipWithoutUtf8PasswordEncoding() throws IOException {
+    testAddAndExtractWithPasswordUtf8Encoding(false);
+  }
+
+  @Test
+  public void testAddFilesWithUt8PasswordAndExtractFilesWithoutUtf8PasswordFails() throws IOException {
+    testAddFilesWithUt8PasswordAndExtractFilesWithoutUtf8PasswordFails(true, false);
+  }
+
+  @Test
+  public void testAddFilesWithoutUt8PasswordAndExtractFilesWithUtf8PasswordFails() throws IOException {
+    testAddFilesWithUt8PasswordAndExtractFilesWithoutUtf8PasswordFails(false, true);
+  }
+
+  @Test
+  public void testAddFileWithCustomLastModifiedFileTimeSetsInputTime() throws IOException, ParseException {
+    ZipFile zipFile = new ZipFile(generatedZipFile);
+    String string_date = "20-January-2020";
+    long expectedLastModifiedTimeInMillis = new SimpleDateFormat("dd-MMM-yyyy").parse(string_date).getTime();
+    ZipParameters zipParameters = new ZipParameters();
+    zipParameters.setLastModifiedFileTime(expectedLastModifiedTimeInMillis);
+    String fileToTestWith = "sample.pdf";
+
+    zipFile.addFile(getTestFileFromResources(fileToTestWith), zipParameters);
+
+    verifyLastModifiedFileTime(zipFile, fileToTestWith, expectedLastModifiedTimeInMillis);
+    // Test again by instantiating zip file again to make sure that the last modified file time is correctly stored and
+    // read via HeaderReader as well
+    zipFile = new ZipFile(generatedZipFile);
+    verifyLastModifiedFileTime(zipFile, fileToTestWith, expectedLastModifiedTimeInMillis);
+  }
+
+  @Test
+  public void testExtractFileWithExtraDataRecordAndCorruptMac() throws ZipException {
+    ZipFile zipFile = new ZipFile(getTestArchiveFromResources("aes_with_extra_data_record_and_corrupt_mac.zip"), PASSWORD);
+
+    expectedException.expect(ZipException.class);
+    expectedException.expectMessage("java.io.IOException: Reached end of data for this entry, but aes verification failed");
+
+    zipFile.extractAll(outputFolder.getPath());
+  }
+
+  private void testAddAndExtractWithPasswordUtf8Encoding(boolean useUtf8ForPassword) throws IOException {
+    char[] password = "hun 焰".toCharArray();
+    ZipFile zipFile = new ZipFile(generatedZipFile, password);
+    zipFile.setUseUtf8CharsetForPasswords(useUtf8ForPassword);
+    ZipParameters zipParameters = new ZipParameters();
+    zipParameters.setEncryptFiles(true);
+    zipParameters.setEncryptionMethod(EncryptionMethod.AES);
+
+    zipFile.addFiles(FILES_TO_ADD, zipParameters);
+
+    zipFile = new ZipFile(generatedZipFile, password);
+    zipFile.setUseUtf8CharsetForPasswords(useUtf8ForPassword);
+    zipFile.extractAll(outputFolder.getPath());
+    assertThat(zipFile.getFileHeaders()).hasSize(3);
+  }
+
+  private void testAddFilesWithUt8PasswordAndExtractFilesWithoutUtf8PasswordFails(boolean useUtf8ForAddingFiles,
+                                                                                  boolean useUt8ForExtractingFiles)
+    throws IOException {
+
+    char[] password = "hun 焰".toCharArray();
+    ZipFile zipFile = new ZipFile(generatedZipFile, password);
+    zipFile.setUseUtf8CharsetForPasswords(useUtf8ForAddingFiles);
+    ZipParameters zipParameters = new ZipParameters();
+    zipParameters.setEncryptFiles(true);
+    zipParameters.setEncryptionMethod(EncryptionMethod.AES);
+
+    zipFile.addFiles(FILES_TO_ADD, zipParameters);
+
+    expectedException.expect(ZipException.class);
+    expectedException.expectMessage("Wrong Password");
+
+    zipFile = new ZipFile(generatedZipFile, password);
+    zipFile.setUseUtf8CharsetForPasswords(useUt8ForExtractingFiles);
+    zipFile.extractAll(outputFolder.getPath());
+  }
+
   private void assertInputStreamsAreClosed(List<InputStream> inputStreams) {
     for (InputStream inputStream : inputStreams) {
       try {
@@ -688,5 +776,16 @@ public class MiscZipFileIT extends AbstractIT {
       }
     }
     return filteredThreads;
+  }
+
+  private void verifyLastModifiedFileTime(ZipFile zipFile, String entryNameInZipToVerify,
+                                          long expectedLastModifiedTimeInMillis) throws IOException {
+    FileHeader fileHeader = zipFile.getFileHeader(entryNameInZipToVerify);
+    assertThat(fileHeader.getLastModifiedTimeEpoch()).isEqualTo(expectedLastModifiedTimeInMillis);
+    assertThat(fileHeader.getLastModifiedTime()).isEqualTo(epochToExtendedDosTime(expectedLastModifiedTimeInMillis));
+    zipFile.extractAll(outputFolder.getPath());
+    File extractedFile = Paths.get(outputFolder.getPath(), entryNameInZipToVerify).toFile();
+    assertThat(extractedFile.exists()).isTrue();
+    assertThat(extractedFile.lastModified()).isEqualTo(expectedLastModifiedTimeInMillis);
   }
 }

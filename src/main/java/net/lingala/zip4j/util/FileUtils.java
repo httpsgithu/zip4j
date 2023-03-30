@@ -1,7 +1,6 @@
 package net.lingala.zip4j.util;
 
 import net.lingala.zip4j.exception.ZipException;
-import net.lingala.zip4j.model.ExcludeFileFilter;
 import net.lingala.zip4j.model.ZipModel;
 import net.lingala.zip4j.model.ZipParameters;
 import net.lingala.zip4j.progress.ProgressMonitor;
@@ -34,6 +33,9 @@ import static java.nio.file.attribute.PosixFilePermission.OTHERS_WRITE;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_READ;
 import static java.nio.file.attribute.PosixFilePermission.OWNER_WRITE;
+import static net.lingala.zip4j.model.ZipParameters.SymbolicLinkAction.INCLUDE_LINKED_FILE_ONLY;
+import static net.lingala.zip4j.model.ZipParameters.SymbolicLinkAction.INCLUDE_LINK_AND_LINKED_FILE;
+import static net.lingala.zip4j.model.ZipParameters.SymbolicLinkAction.INCLUDE_LINK_ONLY;
 import static net.lingala.zip4j.util.BitUtils.isBitSet;
 import static net.lingala.zip4j.util.BitUtils.setBit;
 import static net.lingala.zip4j.util.InternalZipConstants.FILE_SEPARATOR;
@@ -93,12 +95,8 @@ public class FileUtils {
     }
   }
 
-  public static List<File> getFilesInDirectoryRecursive(File path, boolean readHiddenFiles, boolean readHiddenFolders) throws ZipException {
-    return getFilesInDirectoryRecursive(path, readHiddenFiles, readHiddenFolders, null);
-  }
-
-  public static List<File> getFilesInDirectoryRecursive(File path, boolean readHiddenFiles, boolean readHiddenFolders, ExcludeFileFilter excludedFiles)
-      throws ZipException {
+  public static List<File> getFilesInDirectoryRecursive(File path, ZipParameters zipParameters)
+          throws ZipException {
 
     if (path == null) {
       throw new ZipException("input path is null, cannot read files in the directory");
@@ -112,22 +110,23 @@ public class FileUtils {
     }
 
     for (File file : filesAndDirs) {
-      if (excludedFiles != null && excludedFiles.isExcluded(file)) {
+      if (zipParameters.getExcludeFileFilter() != null && zipParameters.getExcludeFileFilter().isExcluded(file)) {
         continue;
       }
 
-      if (file.isHidden()) {
-        if (file.isDirectory()) {
-          if (!readHiddenFolders) {
-            continue;
-          }
-        } else if (!readHiddenFiles) {
-          continue;
-        }
+      if (file.isHidden() && !zipParameters.isReadHiddenFiles()) {
+        continue;
       }
+
       result.add(file);
-      if (file.isDirectory()) {
-        result.addAll(getFilesInDirectoryRecursive(file, readHiddenFiles, readHiddenFolders, excludedFiles));
+
+      ZipParameters.SymbolicLinkAction symbolicLinkAction = zipParameters.getSymbolicLinkAction();
+      boolean isSymLink = isSymbolicLink(file);
+      // If a symlink's target is a directory, file.isDirectory is true. Only check if file is a directory is file is
+      // not a symlink.
+      if ((isSymLink && !INCLUDE_LINK_ONLY.equals(symbolicLinkAction))
+              || (!isSymLink && file.isDirectory())) {
+        result.addAll(getFilesInDirectoryRecursive(file,zipParameters));
       }
     }
 
@@ -223,7 +222,11 @@ public class FileUtils {
           String rootPath = new File(fileToAdd.getParentFile().getCanonicalFile().getPath() + File.separator + fileToAdd.getCanonicalFile().getName()).getPath();
           tmpFileName = rootPath.substring(rootFolderFileRef.length());
         } else {
-           tmpFileName = fileCanonicalPath.substring(rootFolderFileRef.length());
+          if (!fileToAdd.getCanonicalFile().getPath().startsWith(rootFolderFileRef)) {
+            tmpFileName = fileToAdd.getCanonicalFile().getParentFile().getName() + FILE_SEPARATOR + fileToAdd.getCanonicalFile().getName();
+          } else {
+            tmpFileName = fileCanonicalPath.substring(rootFolderFileRef.length());
+          }
         }
 
         if (tmpFileName.startsWith(System.getProperty("file.separator"))) {
@@ -351,8 +354,8 @@ public class FileUtils {
       if (isSymbolicLink(file)) {
         // If symlink is INCLUDE_LINK_ONLY, and if the above condition is true, it means that the link exists and there
         // will be no need to check for link existence explicitly, check only for target file existence if required
-        if (symLinkAction.equals(ZipParameters.SymbolicLinkAction.INCLUDE_LINK_AND_LINKED_FILE)
-            || symLinkAction.equals(ZipParameters.SymbolicLinkAction.INCLUDE_LINKED_FILE_ONLY)) {
+        if (symLinkAction.equals(INCLUDE_LINK_AND_LINKED_FILE)
+            || symLinkAction.equals(INCLUDE_LINKED_FILE_ONLY)) {
           assertSymbolicLinkTargetExists(file);
         }
       } else {
@@ -465,6 +468,15 @@ public class FileUtils {
     }
 
     DosFileAttributeView fileAttributeView = Files.getFileAttributeView(file, DosFileAttributeView.class, LinkOption.NOFOLLOW_LINKS);
+
+    //IntelliJ complains that fileAttributeView can never be null. But apparently it can.
+    //See https://github.com/srikanth-lingala/zip4j/issues/435
+    //Even the javadoc of Files.getFileAttributeView says it can be null
+    //noinspection ConstantConditions
+    if (fileAttributeView == null) {
+      return;
+    }
+
     try {
       fileAttributeView.setReadOnly(isBitSet(fileAttributes[0], 0));
       fileAttributeView.setHidden(isBitSet(fileAttributes[0], 1));
@@ -504,6 +516,11 @@ public class FileUtils {
     try {
       DosFileAttributeView dosFileAttributeView = Files.getFileAttributeView(file, DosFileAttributeView.class,
           LinkOption.NOFOLLOW_LINKS);
+
+      if (dosFileAttributeView == null) {
+        return fileAttributes;
+      }
+
       DosFileAttributes dosFileAttributes = dosFileAttributeView.readAttributes();
 
       byte windowsAttribute = 0;
@@ -541,9 +558,17 @@ public class FileUtils {
           LinkOption.NOFOLLOW_LINKS);
       Set<PosixFilePermission> posixFilePermissions = posixFileAttributeView.readAttributes().permissions();
 
-      fileAttributes[3] = setBitIfApplicable(Files.isRegularFile(file), fileAttributes[3], 7);
-      fileAttributes[3] = setBitIfApplicable(Files.isDirectory(file), fileAttributes[3], 6);
-      fileAttributes[3] = setBitIfApplicable(Files.isSymbolicLink(file), fileAttributes[3], 5);
+      boolean isSymlink = Files.isSymbolicLink(file);
+      if (isSymlink) {
+        // Mark as a regular file and not a directory if file is a symlink and even if the symlink points to a directory
+        fileAttributes[3] = BitUtils.setBit(fileAttributes[3], 7);
+        fileAttributes[3] = BitUtils.unsetBit(fileAttributes[3], 6);
+      } else {
+        fileAttributes[3] = setBitIfApplicable(Files.isRegularFile(file), fileAttributes[3], 7);
+        fileAttributes[3] = setBitIfApplicable(Files.isDirectory(file), fileAttributes[3], 6);
+      }
+
+      fileAttributes[3] = setBitIfApplicable(isSymlink, fileAttributes[3], 5);
       fileAttributes[3] = setBitIfApplicable(posixFilePermissions.contains(OWNER_READ), fileAttributes[3], 0);
       fileAttributes[2] = setBitIfApplicable(posixFilePermissions.contains(OWNER_WRITE), fileAttributes[2], 7);
       fileAttributes[2] = setBitIfApplicable(posixFilePermissions.contains(OWNER_EXECUTE), fileAttributes[2], 6);

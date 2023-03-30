@@ -99,6 +99,7 @@ public class ZipFile implements Closeable {
   private ExecutorService executorService;
   private int bufferSize = InternalZipConstants.BUFF_SIZE;
   private List<InputStream> openInputStreams = new ArrayList<>();
+  private boolean useUtf8CharsetForPasswords = InternalZipConstants.USE_UTF8_FOR_PASSWORD_ENCODING_DECODING;
 
   /**
    * Creates a new ZipFile instance with the zip file at the location specified in zipFile.
@@ -163,7 +164,7 @@ public class ZipFile implements Closeable {
    * @param parameters     - zip parameters for this file list
    * @param splitArchive   - if archive has to be split or not
    * @param splitLength    - if archive has to be split, then length in bytes at which it has to be split
-   * @throws ZipException
+   * @throws ZipException  - if zip file already exists, or of split length is less than 65536
    */
   public void createSplitZipFile(List<File> filesToAdd, ZipParameters parameters, boolean splitArchive,
                             long splitLength) throws ZipException {
@@ -179,10 +180,40 @@ public class ZipFile implements Closeable {
 
     createNewZipModel();
     zipModel.setSplitArchive(splitArchive);
-    zipModel.setSplitLength(splitLength);
+    zipModel.setSplitLength(splitArchive ? splitLength : -1);
 
     new AddFilesToZipTask(zipModel, password, headerWriter, buildAsyncParameters()).execute(
         new AddFilesToZipTaskParameters(filesToAdd, parameters, buildConfig()));
+  }
+
+  /**
+   * Creates a split zip file from the input stream if splitArchive flag is set to true. If this flag is set to false
+   * this method behaves as creating a regular (non-split) zip file. Split Length has to be more than 65536 bytes
+   *
+   * @param inputStream stream to add to the zip file
+   * @param parameters zip parameters to consider when creating the zip file
+   * @param splitArchive true if zip file has to be split, false otherwise
+   * @param splitLength length in bytes at which the zip file has to be split
+   * @throws ZipException if zip file already exists, or of split length is less than 65536
+   */
+  public void createSplitZipFile(InputStream inputStream, ZipParameters parameters, boolean splitArchive,
+                                 long splitLength) throws ZipException {
+
+    if (zipFile.exists()) {
+      throw new ZipException("zip file: " + zipFile
+              + " already exists. To add files to existing zip file use addFile method");
+    }
+
+    if (inputStream == null) {
+      throw new ZipException("input stream is null, cannot create zip file");
+    }
+
+    createNewZipModel();
+    zipModel.setSplitArchive(splitArchive);
+    zipModel.setSplitLength(splitArchive ? splitLength : -1);
+
+    new AddStreamToZipTask(zipModel, password, headerWriter, buildAsyncParameters()).execute(
+            new AddStreamToZipTaskParameters(inputStream, parameters, buildConfig()));
   }
 
   /**
@@ -1233,6 +1264,14 @@ public class ZipFile implements Closeable {
   }
 
   private Zip4jConfig buildConfig() {
-    return new Zip4jConfig(charset, bufferSize);
+    return new Zip4jConfig(charset, bufferSize, useUtf8CharsetForPasswords);
+  }
+
+  public boolean isUseUtf8CharsetForPasswords() {
+    return useUtf8CharsetForPasswords;
+  }
+
+  public void setUseUtf8CharsetForPasswords(boolean useUtf8CharsetForPasswords) {
+    this.useUtf8CharsetForPasswords = useUtf8CharsetForPasswords;
   }
 }
