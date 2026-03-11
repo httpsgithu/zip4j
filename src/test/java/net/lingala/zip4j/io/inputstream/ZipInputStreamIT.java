@@ -23,10 +23,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.nio.file.Files;
+import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
-import java.util.Random;
 import java.util.Set;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -34,6 +35,7 @@ import java.util.zip.ZipOutputStream;
 import static net.lingala.zip4j.testutils.TestUtils.getTestFileFromResources;
 import static net.lingala.zip4j.testutils.ZipFileVerifier.verifyFileContent;
 import static net.lingala.zip4j.util.InternalZipConstants.MIN_BUFF_SIZE;
+import static net.lingala.zip4j.util.InternalZipConstants.USE_UTF8_FOR_PASSWORD_ENCODING_DECODING;
 import static org.assertj.core.api.Assertions.assertThat;
 
 public class ZipInputStreamIT extends AbstractIT {
@@ -44,7 +46,7 @@ public class ZipInputStreamIT extends AbstractIT {
   @Test
   public void testZipInputStreamConstructorThrowsExceptionWhenBufferSizeIsLessThanExpected() {
     InputStream inputStream = new ByteArrayInputStream(new byte[1]);
-    Zip4jConfig zip4jConfig = new Zip4jConfig(null, InternalZipConstants.MIN_BUFF_SIZE - 1);
+    Zip4jConfig zip4jConfig = new Zip4jConfig(null, InternalZipConstants.MIN_BUFF_SIZE - 1, USE_UTF8_FOR_PASSWORD_ENCODING_DECODING);
 
     expectedException.expect(IllegalArgumentException.class);
     expectedException.expectMessage("Buffer size cannot be less than " + MIN_BUFF_SIZE + " bytes");
@@ -150,7 +152,7 @@ public class ZipInputStreamIT extends AbstractIT {
 
   @Test
   public void testExtractWithRandomLengthWithAesAndDeflateCompression() throws IOException {
-    Random random = new Random();
+    SecureRandom random = new SecureRandom();
     File createZipFile = createZipFile(CompressionMethod.DEFLATE, true, EncryptionMethod.AES, AesKeyStrength.KEY_STRENGTH_256, PASSWORD);
     LocalFileHeader localFileHeader;
     int readLen;
@@ -299,6 +301,63 @@ public class ZipInputStreamIT extends AbstractIT {
   public void testExtractZipFileWithDirectoriesContainingExtendedLocalFileHeader() throws IOException {
     extractZipFileWithInputStreams(TestUtils.getTestArchiveFromResources("dirs_with_extended_local_file_headers.zip"),
         null, InternalZipConstants.BUFF_SIZE, false, 2);
+  }
+
+  @Test
+  public void testExtractZipFileWithNullAesExtraDataRecordThrowsException() throws IOException {
+    expectedException.expect(ZipException.class);
+    expectedException.expectMessage("corrupt AES extra data records");
+
+    extractZipFileWithInputStreams(TestUtils.getTestArchiveFromResources("null-aes-key-strength-in-aes-extra-data-record"),
+        null, InternalZipConstants.BUFF_SIZE, false, 1);
+  }
+
+  @Test
+  public void testExtractZipFileWithFileNameLength0ThrowsException() throws IOException {
+    expectedException.expect(IOException.class);
+    expectedException.expectMessage("Invalid entry name in local file header");
+
+    extractZipFileWithInputStreams(TestUtils.getTestArchiveFromResources("file_name_size_is_0_in_local_file_header"),
+        null, InternalZipConstants.BUFF_SIZE, false, 1);
+  }
+
+  @Test
+  public void testExtractZipFileWithInvalidAesExtraDataRecordThrowsException() throws IOException {
+    expectedException.expect(ZipException.class);
+    expectedException.expectMessage("corrupt AES extra data records");
+
+    extractZipFileWithInputStreams(TestUtils.getTestArchiveFromResources("invalid_aes_extra_data_record_length_in_header"),
+        null, InternalZipConstants.BUFF_SIZE, false, 1);
+  }
+
+  @Test
+  public void testExtractZipFileWhenUnexpectedEofReachedThrowsException() throws IOException {
+    expectedException.expect(IOException.class);
+    expectedException.expectMessage("Unexpected EOF reached when trying to read stream");
+
+    extractZipFileWithInputStreams(TestUtils.getTestArchiveFromResources("unexpected-eof-when-reading-stream"),
+        null, InternalZipConstants.BUFF_SIZE, false, 1);
+  }
+
+  @Test
+  public void readingJarFileWithCompressedSizeNotZeroForDirectoryIsSuccessful() throws IOException {
+    File zipFileToRead = getTestArchiveFromResources("content_in_entry_which_is_directory.jar");
+    try (ZipInputStream zipInputStream = new ZipInputStream(Files.newInputStream(zipFileToRead.toPath()))) {
+      int numberOfEntries = 0;
+      while (zipInputStream.getNextEntry() != null) {
+        numberOfEntries++;
+      }
+      assertThat(numberOfEntries).isEqualTo(345);
+    }
+  }
+
+  @Test
+  public void testExtractZipFileWithExtraDataRecordAndCorruptAesMacFails() throws IOException {
+    expectedException.expect(IOException.class);
+    expectedException.expectMessage("Reached end of data for this entry, but aes verification failed");
+
+    extractZipFileWithInputStreams(TestUtils.getTestArchiveFromResources("aes_with_extra_data_record_and_corrupt_mac.zip"),
+            PASSWORD, InternalZipConstants.BUFF_SIZE, false, 1);
   }
 
   private void extractZipFileWithInputStreams(File zipFile, char[] password) throws IOException {

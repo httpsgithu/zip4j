@@ -19,6 +19,7 @@ package net.lingala.zip4j.headers;
 import net.lingala.zip4j.exception.ZipException;
 import net.lingala.zip4j.io.inputstream.NumberedSplitRandomAccessFile;
 import net.lingala.zip4j.model.AESExtraDataRecord;
+import net.lingala.zip4j.model.AbstractFileHeader;
 import net.lingala.zip4j.model.CentralDirectory;
 import net.lingala.zip4j.model.DataDescriptor;
 import net.lingala.zip4j.model.DigitalSignature;
@@ -31,10 +32,7 @@ import net.lingala.zip4j.model.Zip64EndOfCentralDirectoryLocator;
 import net.lingala.zip4j.model.Zip64EndOfCentralDirectoryRecord;
 import net.lingala.zip4j.model.Zip64ExtendedInfo;
 import net.lingala.zip4j.model.ZipModel;
-import net.lingala.zip4j.model.enums.AesKeyStrength;
-import net.lingala.zip4j.model.enums.AesVersion;
-import net.lingala.zip4j.model.enums.CompressionMethod;
-import net.lingala.zip4j.model.enums.EncryptionMethod;
+import net.lingala.zip4j.model.enums.*;
 import net.lingala.zip4j.util.RawIO;
 
 import java.io.IOException;
@@ -64,6 +62,10 @@ public class HeaderReader {
   private final byte[] intBuff = new byte[4];
 
   public ZipModel readAllHeaders(RandomAccessFile zip4jRaf, Zip4jConfig zip4jConfig) throws IOException {
+
+    if (zip4jRaf.length() == 0) {
+      return new ZipModel();
+    }
 
     if (zip4jRaf.length() < ENDHDR) {
       throw new ZipException("Zip file size less than minimum expected zip file size. " +
@@ -157,6 +159,7 @@ public class HeaderReader {
       fileHeader.setDataDescriptorExists(isBitSet(generalPurposeFlags[0], 3));
       fileHeader.setFileNameUTF8Encoded(isBitSet(generalPurposeFlags[1], 3));
       fileHeader.setGeneralPurposeFlag(generalPurposeFlags.clone());
+      fileHeader.setCompressionLevel(determineCompressionLevel(generalPurposeFlags[0]));
 
       fileHeader.setCompressionMethod(CompressionMethod.getCompressionMethodFromCode(rawIO.readShortLittleEndian(
           zip4jRaf)));
@@ -193,7 +196,7 @@ public class HeaderReader {
         String fileName = decodeStringWithCharset(fileNameBuff, fileHeader.isFileNameUTF8Encoded(), charset);
         fileHeader.setFileName(fileName);
       } else {
-        fileHeader.setFileName(null);
+        throw new ZipException("Invalid entry name in file header");
       }
 
       fileHeader.setDirectory(isDirectory(fileHeader.getExternalFileAttributes(), fileHeader.getFileName()));
@@ -534,6 +537,7 @@ public class HeaderReader {
     localFileHeader.setDataDescriptorExists(isBitSet(generalPurposeFlags[0], 3));
     localFileHeader.setFileNameUTF8Encoded(isBitSet(generalPurposeFlags[1], 3));
     localFileHeader.setGeneralPurposeFlag(generalPurposeFlags.clone());
+    localFileHeader.setCompressionLevel(determineCompressionLevel(generalPurposeFlags[0]));
 
     localFileHeader.setCompressionMethod(CompressionMethod.getCompressionMethodFromCode(
         rawIO.readShortLittleEndian(inputStream)));
@@ -558,7 +562,7 @@ public class HeaderReader {
       localFileHeader.setFileName(fileName);
       localFileHeader.setDirectory(fileName.endsWith("/") || fileName.endsWith("\\"));
     } else {
-      localFileHeader.setFileName(null);
+      throw new ZipException("Invalid entry name in local file header");
     }
 
     readExtraDataRecords(inputStream, localFileHeader);
@@ -612,7 +616,7 @@ public class HeaderReader {
     return dataDescriptor;
   }
 
-  private void readAesExtraDataRecord(FileHeader fileHeader, RawIO rawIO) throws ZipException {
+  private void readAesExtraDataRecord(AbstractFileHeader fileHeader, RawIO rawIO) throws ZipException {
     if (fileHeader.getExtraDataRecords() == null || fileHeader.getExtraDataRecords().size() <= 0) {
       return;
     }
@@ -621,18 +625,6 @@ public class HeaderReader {
     if (aesExtraDataRecord != null) {
       fileHeader.setAesExtraDataRecord(aesExtraDataRecord);
       fileHeader.setEncryptionMethod(EncryptionMethod.AES);
-    }
-  }
-
-  private void readAesExtraDataRecord(LocalFileHeader localFileHeader, RawIO rawIO) throws ZipException {
-    if (localFileHeader.getExtraDataRecords() == null || localFileHeader.getExtraDataRecords().size() <= 0) {
-      return;
-    }
-
-    AESExtraDataRecord aesExtraDataRecord = readAesExtraDataRecord(localFileHeader.getExtraDataRecords(), rawIO);
-    if (aesExtraDataRecord != null) {
-      localFileHeader.setAesExtraDataRecord(aesExtraDataRecord);
-      localFileHeader.setEncryptionMethod(EncryptionMethod.AES);
     }
   }
 
@@ -650,7 +642,8 @@ public class HeaderReader {
 
       if (extraDataRecord.getHeader() == HeaderSignature.AES_EXTRA_DATA_RECORD.getValue()) {
 
-        if (extraDataRecord.getData() == null) {
+        byte[] aesExtraDataRecordBytes = extraDataRecord.getData();
+        if (aesExtraDataRecordBytes == null || aesExtraDataRecordBytes.length != 7) {
           throw new ZipException("corrupt AES extra data records");
         }
 
@@ -747,5 +740,19 @@ public class HeaderReader {
     }
 
     return fileName != null && (fileName.endsWith("/") || fileName.endsWith("\\"));
+  }
+
+  private CompressionLevel determineCompressionLevel(byte generalPurposeFlag) {
+    boolean isFirstBitSet = isBitSet(generalPurposeFlag, 1);
+    boolean isSecondBitSet = isBitSet(generalPurposeFlag, 2);
+    if (!isFirstBitSet && !isSecondBitSet) {
+      return CompressionLevel.NORMAL;
+    } else if (!isSecondBitSet) {
+      return CompressionLevel.MAXIMUM;
+    } else if (!isFirstBitSet) {
+      return CompressionLevel.FAST;
+    } else  {
+      return CompressionLevel.FASTEST;
+    }
   }
 }

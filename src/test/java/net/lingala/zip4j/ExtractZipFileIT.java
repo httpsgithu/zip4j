@@ -19,6 +19,7 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -329,6 +330,22 @@ public class ExtractZipFileIT extends AbstractIT {
   }
 
   @Test
+  public void testSymlinkToDirectoryMaintainsSymlink() throws IOException {
+    verifyZipFileByExtractingAllFiles(getTestArchiveFromResources("zipWithLinkToDirAndFolder.zip"), null, outputFolder, 5, false);
+
+    Path aDirectory = Paths.get(outputFolder.getPath(), "a");
+    Path symlinkToDir = Paths.get(outputFolder.getPath(), "b");
+    Path aFile = Paths.get(outputFolder.getPath(), "c");
+    Path symlinkToFile = Paths.get(outputFolder.getPath(), "d");
+    assertThat(aDirectory).isDirectory();
+    assertThat(Files.isSymbolicLink(symlinkToDir)).isTrue();
+    assertThat(aFile).isRegularFile();
+    assertThat(symlinkToFile).isSymbolicLink();
+    assertThat(Files.readSymbolicLink(symlinkToDir)).isEqualTo(aDirectory.getFileName());
+    assertThat(Files.readSymbolicLink(symlinkToFile)).isEqualTo(aFile.getFileName());
+  }
+
+  @Test
   public void testExtractFilesThrowsExceptionForWrongPasswordForAes() throws IOException {
     ZipParameters zipParameters = createZipParameters(EncryptionMethod.AES, AesKeyStrength.KEY_STRENGTH_256);
     ZipFile zipFile = new ZipFile(generatedZipFile, PASSWORD);
@@ -516,7 +533,7 @@ public class ExtractZipFileIT extends AbstractIT {
   @Test
   public void testExtractZipFileOf7ZipFormatSplitWithoutEncryption() throws IOException {
     List<File> filesToAddToZip = new ArrayList<>(FILES_TO_ADD);
-    filesToAddToZip.add(getTestFileFromResources("file_PDF_1MB.pdf"));
+    filesToAddToZip.add(0, getTestFileFromResources("file_PDF_1MB.pdf"));
     File firstSplitFile = createZipFileAndSplit(filesToAddToZip, 102400, false, null);
     verifyZipFileByExtractingAllFiles(firstSplitFile, outputFolder, 4);
   }
@@ -524,7 +541,7 @@ public class ExtractZipFileIT extends AbstractIT {
   @Test
   public void testExtractZipFileOf7ZipFormatSplitWithAESEncryption() throws IOException {
     List<File> filesToAddToZip = new ArrayList<>(FILES_TO_ADD);
-    filesToAddToZip.add(getTestFileFromResources("file_PDF_1MB.pdf"));
+    filesToAddToZip.add(0, getTestFileFromResources("file_PDF_1MB.pdf"));
     File firstSplitFile = createZipFileAndSplit(filesToAddToZip, 102000, true, EncryptionMethod.AES);
     verifyZipFileByExtractingAllFiles(firstSplitFile, PASSWORD, outputFolder, 4);
   }
@@ -555,7 +572,7 @@ public class ExtractZipFileIT extends AbstractIT {
   public void testExtractZipFileWithEndOfCentralDirectoryNotAtExpectedPosition() throws IOException {
     ZipFile zipFile = new ZipFile(getTestArchiveFromResources("end_of_cen_dir_not_at_expected_position.zip"));
     zipFile.extractAll(outputFolder.getPath());
-    List<File> outputFiles = FileUtils.getFilesInDirectoryRecursive(outputFolder, true, true);
+    List<File> outputFiles = FileUtils.getFilesInDirectoryRecursive(outputFolder, new ZipParameters());
 
     assertThat(outputFiles).hasSize(24);
     assertThat(zipFile.getFileHeaders()).hasSize(19);
@@ -594,7 +611,10 @@ public class ExtractZipFileIT extends AbstractIT {
 
     zipFile.extractFile("items/", outputFolderPath);
 
-    List<File> extractedFiles = FileUtils.getFilesInDirectoryRecursive(outputFolder, false, false);
+    ZipParameters zipParameters = new ZipParameters();
+    zipParameters.setReadHiddenFiles(false);
+    zipParameters.setReadHiddenFolders(false);
+    List<File> extractedFiles = FileUtils.getFilesInDirectoryRecursive(outputFolder, zipParameters);
     assertThat(extractedFiles).isNotEmpty();
     assertThat(extractedFiles).hasSize(3);
     assertThat(extractedFiles).contains(
@@ -747,7 +767,7 @@ public class ExtractZipFileIT extends AbstractIT {
   }
 
   private File getFileWithNameFrom(File outputFolder, String fileName) throws ZipException {
-    List<File> filesInFolder = FileUtils.getFilesInDirectoryRecursive(outputFolder, true, true);
+    List<File> filesInFolder = FileUtils.getFilesInDirectoryRecursive(outputFolder, new ZipParameters());
     for (File file : filesInFolder) {
       if (file.getName().equals(fileName)) {
         return file;
@@ -795,7 +815,10 @@ public class ExtractZipFileIT extends AbstractIT {
   }
 
   private List<File> getRegularFilesFromFolder(File folder) throws ZipException {
-    List<File> filesInFolder = FileUtils.getFilesInDirectoryRecursive(folder, false, false);
+    ZipParameters zipParameters = new ZipParameters();
+    zipParameters.setReadHiddenFiles(false);
+    zipParameters.setReadHiddenFolders(false);
+    List<File> filesInFolder = FileUtils.getFilesInDirectoryRecursive(folder, zipParameters);
 
     List<File> regularFiles = new ArrayList<>();
     for (File file : filesInFolder) {

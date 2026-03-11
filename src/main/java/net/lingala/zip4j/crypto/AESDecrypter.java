@@ -17,12 +17,13 @@
 package net.lingala.zip4j.crypto;
 
 import net.lingala.zip4j.crypto.PBKDF2.MacBasedPRF;
-import net.lingala.zip4j.crypto.engine.AESEngine;
 import net.lingala.zip4j.exception.ZipException;
 import net.lingala.zip4j.model.AESExtraDataRecord;
 import net.lingala.zip4j.model.enums.AesKeyStrength;
 
 import java.util.Arrays;
+
+import javax.crypto.Cipher;
 
 import static net.lingala.zip4j.crypto.AesCipherUtil.prepareBuffAESIVBytes;
 import static net.lingala.zip4j.exception.ZipException.Type.WRONG_PASSWORD;
@@ -33,21 +34,22 @@ import static net.lingala.zip4j.util.InternalZipConstants.AES_BLOCK_SIZE;
  */
 public class AESDecrypter implements Decrypter {
 
-  private AESEngine aesEngine;
+  private Cipher aes;
   private MacBasedPRF mac;
 
   private int nonce = 1;
   private byte[] iv;
   private byte[] counterBlock;
 
-  public AESDecrypter(AESExtraDataRecord aesExtraDataRecord, char[] password, byte[] salt, byte[] passwordVerifier) throws ZipException {
+  public AESDecrypter(AESExtraDataRecord aesExtraDataRecord, char[] password, byte[] salt,
+                      byte[] passwordVerifier) throws ZipException {
     iv = new byte[AES_BLOCK_SIZE];
     counterBlock = new byte[AES_BLOCK_SIZE];
     init(salt, passwordVerifier, password, aesExtraDataRecord);
   }
 
-  private void init(byte[] salt, byte[] passwordVerifier, char[] password, AESExtraDataRecord aesExtraDataRecord)
-      throws ZipException {
+  private void init(byte[] salt, byte[] passwordVerifier, char[] password,
+                    AESExtraDataRecord aesExtraDataRecord) throws ZipException {
 
     if (password == null || password.length <= 0) {
       throw new ZipException("empty or null password provided for AES decryption", WRONG_PASSWORD);
@@ -60,7 +62,7 @@ public class AESDecrypter implements Decrypter {
       throw new ZipException("Wrong Password", ZipException.Type.WRONG_PASSWORD);
     }
 
-    aesEngine = AesCipherUtil.getAESEngine(derivedKey, aesKeyStrength);
+    aes = AesCipherUtil.getAESEngine(derivedKey, aesKeyStrength, Cipher.ENCRYPT_MODE);
     mac = AesCipherUtil.getMacBasedPRF(derivedKey, aesKeyStrength);
   }
 
@@ -73,7 +75,7 @@ public class AESDecrypter implements Decrypter {
 
       mac.update(buff, j, loopCount);
       prepareBuffAESIVBytes(iv, nonce);
-      aesEngine.processBlock(iv, counterBlock);
+      counterBlock = aes.update(iv);
 
       for (int k = 0; k < loopCount; k++) {
         buff[j + k] = (byte) (buff[j + k] ^ counterBlock[k]);
@@ -85,7 +87,7 @@ public class AESDecrypter implements Decrypter {
     return len;
   }
 
-  public byte[] getCalculatedAuthenticationBytes() {
-    return mac.doFinal();
+  public byte[] getCalculatedAuthenticationBytes(int numberOfBytesPushedBack) {
+    return mac.doFinal(numberOfBytesPushedBack);
   }
 }
